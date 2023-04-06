@@ -13,13 +13,15 @@ import numpy as np
 from PIL import Image
 
 # Constants
-EPOCHS = 100 
+EPOCHS = 5 
 BATCH_SIZE = 32
 NUM_WORKER = 8
-Z_SIZE = 126
-IMAGE_SIZE = 1 * 28 * 28
+Z_DIM = 126
+H_DIM = 64
+IMAGE_SIZE = 64 
+IMAGE_DIM = 1
 LEARNING_RATE = 3e-4
-LOG_DIR = "./runs/FCGAN"
+LOG_DIR = "./runs/DCGAN"
 
 # Tensorboard
 tb = program.TensorBoard()
@@ -31,7 +33,8 @@ print(f"Tensorflow listening on {url}")
 
 train_transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize((0.5,),(0.5,))
+    transforms.Normalize((0.5,),(0.5,)),
+    transforms.Resize(IMAGE_SIZE)
 ])
 # Data
 dataset = datasets.MNIST(root = "./data", transform = train_transform, download = True)
@@ -41,18 +44,18 @@ writer_real = SummaryWriter(LOG_DIR + "/real")
 
 # Model & optimizer ...
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-gen = models.Generator(Z_SIZE, IMAGE_SIZE).to(device)
-disc = models.Discriminator(IMAGE_SIZE).to(device)
+gen = models.Generator(Z_DIM, H_DIM, IMAGE_DIM).to(device)
+disc = models.Discriminator(IMAGE_DIM, H_DIM).to(device)
 opt_G = torch.optim.Adam(gen.parameters(), lr = LEARNING_RATE)
 opt_D = torch.optim.Adam(disc.parameters(), lr = LEARNING_RATE)
 criterion = nn.BCELoss()
 
 # Model Graph
-writer_fake.add_graph(gen, torch.randn(Z_SIZE).to(device))
-writer_real.add_graph(disc, torch.randn(IMAGE_SIZE).to(device))
+writer_fake.add_graph(gen, torch.randn((BATCH_SIZE, Z_DIM, 1, 1)).to(device))
+writer_real.add_graph(disc, torch.randn((BATCH_SIZE, IMAGE_DIM, IMAGE_SIZE, IMAGE_SIZE)).to(device))
 
 # Initialize
-fixed_noise = torch.randn((BATCH_SIZE, Z_SIZE)).to(device)
+fixed_noise = torch.randn((BATCH_SIZE, Z_DIM, 1, 1)).to(device)
 sample, _ = next(iter(loader))
 img_grid_real = torchvision.utils.make_grid(sample, normalize=True)
 writer_real.add_image("Mnist Real Images", img_grid_real, global_step = 0)
@@ -66,12 +69,12 @@ for epoch in range(1, EPOCHS + 1):
     loop = tqdm(loader)
     loop.set_description(f"Testing Epoch[{epoch}/{EPOCHS}]")
     for real, _ in loop:
-        real = real.view(-1, 784).to(device)
+        real = real.to(device)
         batch_size = real.shape[0]
 
         ### Train Discriminator: max log(D(x)) + log(1 - D(G(z)))
         disc.zero_grad()
-        noise = torch.randn(batch_size, Z_SIZE).to(device)
+        noise = torch.randn((batch_size, Z_DIM, 1, 1)).to(device)
         fake = gen(noise)
         disc_real = disc(real).view(-1)
         lossD_real = criterion(disc_real, torch.ones_like(disc_real))
@@ -95,7 +98,7 @@ for epoch in range(1, EPOCHS + 1):
     with torch.no_grad():
         avglossD /= len(dataset)
         avglossG /= len(dataset)
-        fake = gen(fixed_noise).reshape(-1, 1, 28, 28)
+        fake = gen(fixed_noise)
         img_grid_fake = torchvision.utils.make_grid(fake, normalize = True)
         print(f"Generator Loss = {avglossG}, Discriminator Loss = {avglossD}")
         writer_fake.add_image("Mnist Fake Images", img_grid_fake, global_step = epoch)  
@@ -105,4 +108,4 @@ for epoch in range(1, EPOCHS + 1):
         img = np.transpose(img, (1, 2, 0))
         imglist.append(np.uint8(img * 255))
 imglist = [Image.fromarray(img) for img in imglist] 
-imglist[0].save("GIF/fake.gif", save_all = True, append_images = imglist[1:], duration = 200, loop = 0)
+imglist[0].save("GIF/fake.gif", save_all = True, append_images = imglist[1:], duration = 600, loop = 0)
